@@ -26,7 +26,7 @@
 cp config.example.yaml config.yaml
 python -m pip install -r requirements.txt
 python -m pip install -e .
-python -m cliproxyapi.app --config config.yaml --once
+python -m cliproxyapi.app --once
 ```
 
 ## 项目结构
@@ -35,8 +35,6 @@ python -m cliproxyapi.app --config config.yaml --once
 cliproxyapi/
 ├─ config.yaml
 ├─ config.example.yaml
-├─ config.retry-once.yaml
-├─ config.trigger-once.yaml
 ├─ docker-compose.yml
 ├─ Dockerfile
 ├─ src/cliproxyapi/
@@ -84,7 +82,7 @@ cp config.example.yaml config.yaml
 单轮执行（调试）：
 
 ```bash
-python -m cliproxyapi.app --config config.yaml --once
+python -m cliproxyapi.app --once
 ```
 
 说明：`--once` 会强制新增 1 个账号，不按目标数量做补齐计算。
@@ -92,7 +90,7 @@ python -m cliproxyapi.app --config config.yaml --once
 常驻执行（生产）：
 
 ```bash
-python -m cliproxyapi.app --config config.yaml
+python -m cliproxyapi.app
 ```
 
 ## Docker 部署
@@ -154,7 +152,7 @@ debug:
 建议先执行单轮模式：
 
 ```bash
-python -m cliproxyapi.app --config config.yaml --once
+python -m cliproxyapi.app --once
 ```
 
 单轮执行成功后再切换常驻模式。

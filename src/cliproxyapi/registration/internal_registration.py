@@ -15,7 +15,7 @@ from email import policy
 from email.parser import BytesParser
 from email.utils import getaddresses
 from datetime import datetime, timezone, timedelta
-from urllib.parse import urlparse, parse_qs, urlencode, quote
+from urllib.parse import urlparse, parse_qs, urlencode, quote, unquote
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import urllib3
@@ -29,23 +29,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("cliproxyapi.registration")
 
-
-def _read_int_env(var_name, default):
-    raw = (os.getenv(var_name) or "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning(f"Invalid integer env `{var_name}`: {raw!r}, fallback to {default}")
-        return default
-
-
-def _read_bool_env(var_name, default=False):
-    raw = (os.getenv(var_name) or "").strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
 
 # =================== 配置常量 (来自 1132.py) ===================
 
@@ -63,26 +46,24 @@ EMAIL_DOMAIN = "pid.im"
 # 兼容旧变量名：仍保留但默认等于 EMAIL_DOMAIN
 CF_EMAIL_DOMAIN = EMAIL_DOMAIN
 
-# IMAP 收件配置（默认留空，通过环境变量注入）
-IMAP_HOST = (os.getenv("OPENAI_REG_IMAP_HOST") or "").strip()
-IMAP_PORT = _read_int_env("OPENAI_REG_IMAP_PORT", 993)
-IMAP_USERNAME = (os.getenv("OPENAI_REG_IMAP_USERNAME") or "").strip()
-IMAP_PASSWORD = os.getenv("OPENAI_REG_IMAP_PASSWORD") or ""
-IMAP_MAILBOX = (os.getenv("OPENAI_REG_IMAP_MAILBOX") or "INBOX").strip() or "INBOX"
-IMAP_FETCH_LIMIT = _read_int_env("OPENAI_REG_IMAP_FETCH_LIMIT", 30)
-IMAP_POLL_INTERVAL_SECONDS = _read_int_env("OPENAI_REG_IMAP_POLL_INTERVAL_SECONDS", 2)
-OTP_POLL_TIMEOUT_SECONDS = _read_int_env("OPENAI_REG_OTP_POLL_TIMEOUT_SECONDS", 180)
+# IMAP 收件配置（启动时由 config.yaml 注入）
+IMAP_HOST = ""
+IMAP_PORT = 993
+IMAP_USERNAME = ""
+IMAP_PASSWORD = ""
+IMAP_MAILBOX = "INBOX"
+IMAP_FETCH_LIMIT = 30
+IMAP_POLL_INTERVAL_SECONDS = 2
+OTP_POLL_TIMEOUT_SECONDS = 180
 
-# 代理配置（默认留空，通过环境变量注入）
-PROXY_ENABLED = _read_bool_env("OPENAI_REG_PROXY_ENABLED", False)
-PROXY_HOST = (os.getenv("OPENAI_REG_PROXY_HOST") or "").strip()
-PROXY_USERNAME = (os.getenv("OPENAI_REG_PROXY_USERNAME") or "").strip()
-PROXY_PASSWORD = os.getenv("OPENAI_REG_PROXY_PASSWORD") or ""
-PROXY_SCHEME = (os.getenv("OPENAI_REG_PROXY_SCHEME") or "http").strip() or "http"
+# 代理配置（启动时由 config.yaml 注入）
+PROXY_ENABLED = False
+PROXY_HOST = ""
+PROXY_USERNAME = ""
+PROXY_PASSWORD = ""
+PROXY_SCHEME = "http"
 # 代理触发 Cloudflare challenge 时，是否自动直连重试一次（可能暴露本机出口 IP）
-PROXY_DIRECT_FALLBACK_ON_CHALLENGE = _read_bool_env(
-    "OPENAI_REG_PROXY_DIRECT_FALLBACK_ON_CHALLENGE", False
-)
+PROXY_DIRECT_FALLBACK_ON_CHALLENGE = False
 
 # tempmail.plus 收件配置（保留备用）
 TEMPMAIL_CONFIG = {
@@ -391,8 +372,8 @@ def _open_imap_client():
 
     if not IMAP_HOST or not IMAP_USERNAME or not IMAP_PASSWORD:
         raise RuntimeError(
-            "IMAP configuration is missing. Set OPENAI_REG_IMAP_HOST, OPENAI_REG_IMAP_USERNAME, "
-            "and OPENAI_REG_IMAP_PASSWORD."
+            "IMAP 配置缺失，请在 config.yaml 中设置 registration.imap.host、"
+            "registration.imap.username、registration.imap.password。"
         )
 
     client = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
@@ -438,23 +419,41 @@ def _extract_message_text(msg):
 
 def _message_matches_target(msg, email_addr):
     """判断邮件头是否属于目标邮箱。"""
-    target = (email_addr or "").strip().lower()
+    target = _normalize_email_address(email_addr)
     if not target:
         return False
+    return target in _extract_recipient_emails(msg)
 
-    candidates = []
+
+def _normalize_email_address(value):
+    """标准化邮件地址，去除显示名与包裹字符。"""
+    text = (value or "").strip().lower()
+    if not text:
+        return ""
+    parsed = getaddresses([text])
+    if parsed and parsed[0][1]:
+        text = parsed[0][1].strip().lower()
+    return text.strip("<>\"' ")
+
+
+def _extract_recipient_emails(msg):
+    """提取邮件头中的收件人邮箱列表（标准化后去重）。"""
+    candidates = set()
     for header_name in ("To", "Delivered-To", "X-Original-To", "Cc"):
         header_values = msg.get_all(header_name, [])
         if not header_values:
             continue
-        candidates.extend(
-            addr.strip().lower()
-            for _name, addr in getaddresses(header_values)
-            if addr
-        )
-        candidates.extend(v.strip().lower() for v in header_values if isinstance(v, str))
-
-    return any(target in candidate for candidate in candidates)
+        for _name, addr in getaddresses(header_values):
+            normalized = _normalize_email_address(addr)
+            if normalized:
+                candidates.add(normalized)
+        for raw in header_values:
+            if not isinstance(raw, str):
+                continue
+            normalized = _normalize_email_address(raw)
+            if normalized:
+                candidates.add(normalized)
+    return candidates
 
 
 def _fetch_recent_imap_messages():
@@ -516,7 +515,41 @@ def extract_verification_code(content):
     return m.group(1) if m else None
 
 
-def poll_verification_code(account=None, timeout=OTP_POLL_TIMEOUT_SECONDS, config=None, proxies=None, stop_check=None):
+def _mail_id_to_int(mail_id):
+    """将 IMAP 邮件 ID 转成整数，失败返回 None。"""
+    if isinstance(mail_id, bytes):
+        text = mail_id.decode("utf-8", errors="ignore")
+    else:
+        text = str(mail_id)
+    text = text.strip()
+    if not text.isdigit():
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _latest_mail_id(messages):
+    """从邮件列表中取最大邮件 ID。"""
+    latest = None
+    for mail_id, _msg in messages:
+        current = _mail_id_to_int(mail_id)
+        if current is None:
+            continue
+        if latest is None or current > latest:
+            latest = current
+    return latest
+
+
+def poll_verification_code(
+    account=None,
+    timeout=OTP_POLL_TIMEOUT_SECONDS,
+    config=None,
+    proxies=None,
+    stop_check=None,
+    min_mail_id_exclusive=None,
+):
     """
     通过邮箱管理员 API 轮询验证码。
 
@@ -538,6 +571,8 @@ def poll_verification_code(account=None, timeout=OTP_POLL_TIMEOUT_SECONDS, confi
 
     # 记录已经检查过且无验证码的邮件 ID，仅用于去重日志，不跳过验证码检查
     checked_no_code_ids = set()
+    # 收件人校验日志按邮件 ID 去重，避免轮询时刷屏
+    logged_recipient_ids = set()
 
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -548,6 +583,30 @@ def poll_verification_code(account=None, timeout=OTP_POLL_TIMEOUT_SECONDS, confi
             mails = _fetch_recent_imap_messages()
             if mails:
                 for mail_id, msg in mails:
+                    mail_id_text = (
+                        mail_id.decode("utf-8", errors="ignore")
+                        if isinstance(mail_id, bytes)
+                        else str(mail_id)
+                    )
+                    mail_id_int = _mail_id_to_int(mail_id)
+                    if (
+                        min_mail_id_exclusive is not None
+                        and mail_id_int is not None
+                        and mail_id_int <= min_mail_id_exclusive
+                    ):
+                        continue
+
+                    if mail_id_text not in logged_recipient_ids:
+                        recipients = sorted(_extract_recipient_emails(msg))
+                        recipients_text = ",".join(recipients) if recipients else "无"
+                        logger.info(
+                            "校验收件人：目标邮箱=%s，邮件ID=%s，收件人=%s",
+                            _normalize_email_address(email_addr),
+                            mail_id_text,
+                            recipients_text,
+                        )
+                        logged_recipient_ids.add(mail_id_text)
+
                     if not _message_matches_target(msg, email_addr):
                         continue
 
@@ -556,11 +615,6 @@ def poll_verification_code(account=None, timeout=OTP_POLL_TIMEOUT_SECONDS, confi
                     if code:
                         logger.info(f"找到验证码: {code}")
                         return code
-                    mail_id_text = (
-                        mail_id.decode("utf-8", errors="ignore")
-                        if isinstance(mail_id, bytes)
-                        else str(mail_id)
-                    )
                     # 没有验证码，仅首次打印日志
                     if mail_id_text not in checked_no_code_ids:
                         source = msg.get("From", "未知")
@@ -597,11 +651,11 @@ def generate_proxy_url(username=None, password=None, country="us", scheme="http"
     scheme = (scheme or PROXY_SCHEME or "http").strip() or "http"
 
     if not proxy_host:
-        raise ValueError("Proxy host is not configured. Set OPENAI_REG_PROXY_HOST.")
+        raise ValueError("代理主机未配置，请在 config.yaml 中设置 registration.proxy.host。")
     if not auth_user or not auth_pass:
         raise ValueError(
-            "Proxy credentials are missing. Set OPENAI_REG_PROXY_USERNAME/OPENAI_REG_PROXY_PASSWORD "
-            "or pass username/password."
+            "代理认证信息缺失，请在 config.yaml 中设置 registration.proxy.username 和 "
+            "registration.proxy.password，或在调用时显式传入 username/password。"
         )
 
     if encode_auth:
@@ -749,6 +803,25 @@ def _extract_code_from_url(url):
         return None
 
 
+def _extract_code_from_text(content):
+    """从文本内容中提取 authorization code。"""
+    if not content:
+        return None
+
+    match_callback = re.search(r'https?://localhost[^"\'<>\s]+', content)
+    if match_callback:
+        callback_url = unquote(match_callback.group(0))
+        code = _extract_code_from_url(callback_url)
+        if code:
+            return code
+
+    match_code = re.search(r'(?:\?|&)code=([^&"\'<>\s]+)', content)
+    if match_code:
+        return unquote(match_code.group(1))
+
+    return None
+
+
 def _decode_auth_session(session_obj):
     """
     从 oai-client-auth-session cookie 解码 JSON。
@@ -785,7 +858,10 @@ def _follow_and_extract_code(session_obj, url, max_depth=10):
                 loc = f"{OAUTH_ISSUER}{loc}"
             return _follow_and_extract_code(session_obj, loc, max_depth - 1)
         elif r.status_code == 200:
-            return _extract_code_from_url(r.url)
+            code = _extract_code_from_url(r.url)
+            if code:
+                return code
+            return _extract_code_from_text(getattr(r, "text", ""))
     except requests.exceptions.ConnectionError as e:
         url_match = re.search(r'(https?://localhost[^\s\'"]+)', str(e))
         if url_match:
@@ -960,11 +1036,35 @@ def perform_oauth_login(session, email, password, account_data=None, log=None):
         h_val["oai-device-id"] = device_id
         h_val.update(generate_datadog_trace())
 
+        baseline_mail_id = None
+        try:
+            baseline_mail_id = _latest_mail_id(_fetch_recent_imap_messages())
+        except Exception as e:
+            log(f"[登录 步骤3.5] 获取邮箱基线失败: {e}")
+
+        send_headers = dict(NAVIGATE_HEADERS)
+        send_headers["referer"] = f"{OAUTH_ISSUER}/email-verification"
+        try:
+            send_resp = session.get(
+                f"{OAUTH_ISSUER}/api/accounts/email-otp/send",
+                headers=send_headers,
+                verify=False,
+                timeout=30,
+            )
+            if send_resp.status_code != 200:
+                log(f"[登录 步骤3.5] 触发验证码发送失败: HTTP {send_resp.status_code}")
+                return None
+            log(f"[登录 步骤3.5] 触发验证码发送: {send_resp.status_code}")
+        except Exception as e:
+            log(f"[登录 步骤3.5] 触发验证码发送失败: {e}")
+            return None
+
         log("[登录 步骤3.5] 等待验证码...")
         otp_code = poll_verification_code(
             account_data,
             timeout=OTP_POLL_TIMEOUT_SECONDS,
             proxies=session.proxies,
+            min_mail_id_exclusive=baseline_mail_id,
         )
         if not otp_code:
             log("[登录 步骤3.5] 验证码等待超时")

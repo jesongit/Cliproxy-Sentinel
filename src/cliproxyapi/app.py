@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-from pathlib import Path
 
 from cliproxyapi.cliproxy.client import CliproxyApiClient
 from cliproxyapi.logging_setup import setup_logging
@@ -10,11 +9,6 @@ from cliproxyapi.monitor.scheduler import run_forever, run_once
 from cliproxyapi.settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
-
-
-def _default_config_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "config.yaml"
-
 
 def _resolve_startup_mode(args_once: bool, config_once: bool) -> tuple[str, str]:
     if args_once:
@@ -42,28 +36,47 @@ def _startup_mode_message(mode: str, source: str, interval_seconds: int) -> str:
 
 
 def _validate_settings(settings: Settings) -> None:
+    errors: list[str] = []
+
     if not settings.cliproxy.api_base:
-        raise SystemExit("配置错误：`cliproxy.api_base` 不能为空。")
+        errors.append("`cliproxy.api_base` 不能为空。")
     if not settings.cliproxy.management_key:
-        raise SystemExit("配置错误：`cliproxy.management_key` 不能为空。")
+        errors.append("`cliproxy.management_key` 不能为空。")
     if not settings.registration.imap.host:
-        raise SystemExit("配置错误：`registration.imap.host` 不能为空。")
+        errors.append("`registration.imap.host` 不能为空。")
     if not settings.registration.imap.username:
-        raise SystemExit("配置错误：`registration.imap.username` 不能为空。")
+        errors.append("`registration.imap.username` 不能为空。")
     if not settings.registration.imap.password:
-        raise SystemExit("配置错误：`registration.imap.password` 不能为空。")
+        errors.append("`registration.imap.password` 不能为空。")
+    if settings.registration.imap.fetch_limit < 1:
+        errors.append("`registration.imap.fetch_limit` 必须大于等于 1。")
+    if settings.registration.imap.poll_interval_seconds < 1:
+        errors.append("`registration.imap.poll_interval_seconds` 必须大于等于 1。")
+    if settings.registration.imap.otp_timeout_seconds < 1:
+        errors.append("`registration.imap.otp_timeout_seconds` 必须大于等于 1。")
+    if settings.monitor.target_count < 1:
+        errors.append("`monitor.target_count` 必须大于等于 1。")
+    if settings.monitor.interval_seconds < 1:
+        errors.append("`monitor.interval_seconds` 必须大于等于 1。")
+    if settings.monitor.max_register_attempts < 1:
+        errors.append("`monitor.max_register_attempts` 必须大于等于 1。")
+    if not 0 <= settings.monitor.weekly_remaining_threshold_percent <= 100:
+        errors.append("`monitor.weekly_remaining_threshold_percent` 必须在 0 到 100 之间。")
+
+    if errors:
+        detail = "\n".join(f"{index}. {message}" for index, message in enumerate(errors, start=1))
+        raise SystemExit(f"配置错误，共 {len(errors)} 项：\n{detail}")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="监控 CLIProxyAPI 的 codex 账号并自动补齐。")
-    parser.add_argument("--config", default=str(_default_config_path()), help="YAML 配置文件路径")
     parser.add_argument("--once", action="store_true", help="仅执行一轮后退出")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    settings = load_settings(args.config)
+    settings = load_settings()
     _validate_settings(settings)
     setup_logging(settings.app.log_level)
     mode, source = _resolve_startup_mode(args_once=args.once, config_once=settings.app.once)

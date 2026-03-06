@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -102,8 +104,22 @@ def _as_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
-def load_settings(path: str) -> Settings:
-    file_path = Path(path)
+def _as_bool(value: Any, field_path: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    raise ValueError(f"配置项 `{field_path}` 必须是布尔值")
+
+
+def load_settings(path: str | Path | None = None) -> Settings:
+    file_path = Path(path) if path is not None else DEFAULT_CONFIG_PATH
     if not file_path.exists():
         raise FileNotFoundError(f"配置文件不存在: {file_path}")
 
@@ -126,7 +142,7 @@ def load_settings(path: str) -> Settings:
     return Settings(
         app=AppConfig(
             log_level=str(app_raw.get("log_level", "INFO")),
-            once=bool(app_raw.get("once", False)),
+            once=_as_bool(app_raw.get("once", False), "app.once"),
         ),
         monitor=MonitorConfig(
             target_count=int(monitor_raw.get("target_count", 10)),
@@ -140,7 +156,7 @@ def load_settings(path: str) -> Settings:
             api_base=str(cliproxy_raw.get("api_base", "")).rstrip("/"),
             management_key=str(cliproxy_raw.get("management_key", "")),
             timeout_seconds=int(cliproxy_raw.get("timeout_seconds", 30)),
-            verify_tls=bool(cliproxy_raw.get("verify_tls", True)),
+            verify_tls=_as_bool(cliproxy_raw.get("verify_tls", True), "cliproxy.verify_tls"),
         ),
         registration=RegistrationConfig(
             email=RegistrationEmailConfig(
@@ -158,13 +174,14 @@ def load_settings(path: str) -> Settings:
                 otp_timeout_seconds=int(registration_imap_raw.get("otp_timeout_seconds", 180)),
             ),
             proxy=RegistrationProxyConfig(
-                enabled=bool(registration_proxy_raw.get("enabled", False)),
+                enabled=_as_bool(registration_proxy_raw.get("enabled", False), "registration.proxy.enabled"),
                 scheme=str(registration_proxy_raw.get("scheme", "http")),
                 host=str(registration_proxy_raw.get("host", "")),
                 username=str(registration_proxy_raw.get("username", "")),
                 password=str(registration_proxy_raw.get("password", "")),
-                direct_fallback_on_challenge=bool(
-                    registration_proxy_raw.get("direct_fallback_on_challenge", False)
+                direct_fallback_on_challenge=_as_bool(
+                    registration_proxy_raw.get("direct_fallback_on_challenge", False),
+                    "registration.proxy.direct_fallback_on_challenge",
                 ),
             ),
             oauth=RegistrationOauthConfig(
@@ -183,7 +200,10 @@ def load_settings(path: str) -> Settings:
             filename_pattern=str(upload_raw.get("filename_pattern", "{email}.json")),
         ),
         debug=DebugConfig(
-            save_failed_upload_payload=bool(debug_raw.get("save_failed_upload_payload", False)),
+            save_failed_upload_payload=_as_bool(
+                debug_raw.get("save_failed_upload_payload", False),
+                "debug.save_failed_upload_payload",
+            ),
             failed_payload_dir=str(debug_raw.get("failed_payload_dir", "./debug_failed_payloads")),
         ),
     )

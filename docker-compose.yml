@@ -5,7 +5,7 @@
       dockerfile: Dockerfile
     container_name: cliproxyapi
     restart: unless-stopped
-    command: ["python", "-m", "cliproxyapi.app", "--config", "/app/config.yaml"]
+    command: ["python", "-m", "cliproxyapi.app"]
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./debug_failed_payloads:/app/debug_failed_payloads

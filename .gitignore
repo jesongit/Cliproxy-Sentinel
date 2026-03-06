@@ -26,8 +26,6 @@ ENV/
 
 # 本地配置与敏感信息
 config.yaml
-config.retry-once.yaml
-config.trigger-once.yaml
 
 # 调试输出
 debug_failed_payloads/

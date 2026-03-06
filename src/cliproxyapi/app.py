@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from cliproxyapi.cliproxy.client import CliproxyApiClient
@@ -8,9 +9,36 @@ from cliproxyapi.logging_setup import setup_logging
 from cliproxyapi.monitor.scheduler import run_forever, run_once
 from cliproxyapi.settings import Settings, load_settings
 
+logger = logging.getLogger(__name__)
+
 
 def _default_config_path() -> Path:
     return Path(__file__).resolve().parents[2] / "config.yaml"
+
+
+def _resolve_startup_mode(args_once: bool, config_once: bool) -> tuple[str, str]:
+    if args_once:
+        return "once", "cli"
+    if config_once:
+        return "once", "config"
+    return "forever", "default"
+
+
+def _startup_mode_message(mode: str, source: str, interval_seconds: int) -> str:
+    mode_text = "单轮执行" if mode == "once" else "持续监控"
+    source_text_map = {
+        "cli": "命令行参数 --once",
+        "config": "配置项 app.once",
+        "default": "默认配置",
+    }
+    source_text = source_text_map.get(source, source)
+    strategy_text_map = {
+        "cli": "仅执行一轮监控，强制新增 1 个账号，完成后退出。",
+        "config": "仅执行一轮监控，按缺口补齐账号，完成后退出。",
+        "default": f"每 {interval_seconds} 秒执行一轮监控，按目标数量自动补齐账号。",
+    }
+    strategy_text = strategy_text_map.get(source, "按默认流程执行监控任务。")
+    return f"启动模式：{mode_text}（来源：{source_text}）。执行策略：{strategy_text}"
 
 
 def _validate_settings(settings: Settings) -> None:
@@ -38,6 +66,14 @@ def main() -> None:
     settings = load_settings(args.config)
     _validate_settings(settings)
     setup_logging(settings.app.log_level)
+    mode, source = _resolve_startup_mode(args_once=args.once, config_once=settings.app.once)
+    logger.info(
+        _startup_mode_message(
+            mode=mode,
+            source=source,
+            interval_seconds=settings.monitor.interval_seconds,
+        )
+    )
 
     client = CliproxyApiClient(
         api_base=settings.cliproxy.api_base,
@@ -47,12 +83,8 @@ def main() -> None:
         upload_field_name=settings.upload.field_name,
     )
 
-    if args.once:
-        run_once(client, settings, force_add_one=True)
-        return
-
-    if settings.app.once:
-        run_once(client, settings)
+    if mode == "once":
+        run_once(client, settings, force_add_one=(source == "cli"))
         return
 
     run_forever(client, settings)

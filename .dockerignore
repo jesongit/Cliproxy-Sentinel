@@ -1,0 +1,24 @@
+﻿.git
+.gitignore
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.venv
+venv
+env
+ENV
+dist
+build
+htmlcov
+coverage.xml
+
+# 本地敏感配置不进入镜像构建上下文
+config.yaml
+config.retry-once.yaml
+config.trigger-once.yaml
+
+# 运行时调试输出目录
+debug_failed_payloads

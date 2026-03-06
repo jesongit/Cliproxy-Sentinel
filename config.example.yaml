@@ -1,0 +1,96 @@
+# 应用级配置
+app:
+  # 日志级别，可选：DEBUG/INFO/WARNING/ERROR
+  log_level: INFO
+  # 是否只执行一轮后退出（true=单轮，false=常驻轮询）
+  once: false
+
+# 监控与补齐策略
+monitor:
+  # 目标 Codex 账号数量（低于该值会触发补齐）
+  target_count: 10
+  # 轮询间隔（秒），仅在常驻模式生效
+  interval_seconds: 1800
+  # 单轮最多注册尝试次数（防止死循环）
+  max_register_attempts: 30
+  # 周剩余额度阈值（百分比），低于该值判定为无效账号
+  weekly_remaining_threshold_percent: 30
+
+# CLIProxyAPI 管理接口配置
+cliproxy:
+  # CLIProxyAPI 管理接口基础地址（不带末尾斜杠）
+  api_base: "https://your-cliproxy-api"
+  # CLIProxyAPI 管理密钥（敏感信息）
+  management_key: "your-management-key"
+  # 调用管理接口的超时时间（秒）
+  timeout_seconds: 30
+  # 是否校验 TLS 证书（生产环境建议 true）
+  verify_tls: true
+
+# 自动注册配置
+registration:
+  # 注册邮箱生成规则
+  email:
+    # 邮箱前缀，最终邮箱格式：prefix + 时间戳 + @ + domain
+    prefix: "auto"
+    # 邮箱域名
+    domain: "test.com"
+
+  # IMAP 收验证码配置
+  imap:
+    # IMAP 服务器地址
+    host: "imap.example.com"
+    # IMAP 端口（通常 993）
+    port: 993
+    # IMAP 登录用户名（敏感信息）
+    username: "your-imap-user"
+    # IMAP 登录密码（敏感信息）
+    password: "your-imap-password"
+    # 拉取邮件的邮箱目录
+    mailbox: "INBOX"
+    # 每次轮询最多检查多少封邮件
+    fetch_limit: 30
+    # 轮询邮件间隔（秒）
+    poll_interval_seconds: 2
+    # 等待验证码超时时间（秒）
+    otp_timeout_seconds: 180
+
+  # 代理配置
+  proxy:
+    # 是否启用代理
+    enabled: false
+    # 代理协议，可选：http/socks5/socks5h
+    scheme: "http"
+    # 代理地址（host:port）
+    host: ""
+    # 代理用户名（敏感信息）
+    username: ""
+    # 代理密码（敏感信息）
+    password: ""
+    # 代理触发 challenge 时是否自动直连重试一次
+    direct_fallback_on_challenge: false
+
+  # OAuth 固定参数（通常无需修改）
+  oauth:
+    # OAuth 发行方地址
+    issuer: "https://auth.openai.com"
+    # OAuth 客户端 ID
+    client_id: "app_xxx"
+    # OAuth 回调地址
+    redirect_uri: "http://localhost:1455/auth/callback"
+
+# 上传行为配置（内存直传，不落盘 token）
+upload:
+  # 上传模式，固定 memory_json（注册后以内存对象直接上传）
+  mode: "memory_json"
+  # multipart 上传字段名
+  field_name: "file"
+  # 上传文件名模板（服务端展示用，不落地写文件）
+  filename_pattern: "{email}.json"
+
+# 调试配置
+debug:
+  # 上传失败时是否保存请求载荷到本地（默认关闭）
+  save_failed_upload_payload: false
+  # 上传失败载荷保存目录（仅在上面开关为 true 时生效）
+  failed_payload_dir: "./debug_failed_payloads"

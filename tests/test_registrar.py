@@ -13,67 +13,11 @@ from cliproxyapi.settings import (
 )
 
 
-def test_load_legacy_module_finds_sibling_openai_registration(monkeypatch, tmp_path) -> None:
-    fake_registrar_file = (
-        tmp_path / "workspace" / "cliproxyapi" / "src" / "cliproxyapi" / "registration" / "registrar.py"
-    )
-    fake_registrar_file.parent.mkdir(parents=True, exist_ok=True)
-    fake_registrar_file.write_text("# test", encoding="utf-8")
-    expected_legacy_dir = fake_registrar_file.resolve().parents[4] / "openai_registration"
-    expected_legacy_dir.mkdir(parents=True, exist_ok=True)
-
-    original_sys_path = list(registrar_module.sys.path)
-    if str(expected_legacy_dir) in registrar_module.sys.path:
-        registrar_module.sys.path.remove(str(expected_legacy_dir))
-
-    loaded = {"ok": False}
-
-    def _fake_import_module(module_name: str):
-        if module_name != "openai_registration":
-            raise ModuleNotFoundError(module_name)
-        if str(expected_legacy_dir) in registrar_module.sys.path:
-            loaded["ok"] = True
-            return SimpleNamespace(
-                __name__="openai_registration",
-                generate_random_password=lambda: "P@ssw0rd",
-                get_runtime_proxy_url=lambda: None,
-                ProtocolRegistrar=object,
-            )
-        raise ModuleNotFoundError(module_name)
-
-    monkeypatch.setattr(registrar_module, "__file__", str(fake_registrar_file))
-    monkeypatch.setattr(registrar_module.importlib, "import_module", _fake_import_module)
-
-    try:
-        module = registrar_module.load_legacy_module()
-    finally:
-        registrar_module.sys.path[:] = original_sys_path
-
-    assert module.__name__ == "openai_registration"
-    assert loaded["ok"] is True
-
-
-def test_load_legacy_module_fallback_to_nested_module_when_namespace_package(monkeypatch) -> None:
-    calls: list[str] = []
-    nested_module = SimpleNamespace(
-        __name__="openai_registration.openai_registration",
-        generate_random_password=lambda: "P@ssw0rd",
-        ProtocolRegistrar=object,
-    )
-
-    def _fake_import_module(module_name: str):
-        calls.append(module_name)
-        if module_name == "openai_registration":
-            return SimpleNamespace(__name__="openai_registration")
-        if module_name == "openai_registration.openai_registration":
-            return nested_module
-        raise ModuleNotFoundError(module_name)
-
-    monkeypatch.setattr(registrar_module.importlib, "import_module", _fake_import_module)
-
-    module = registrar_module.load_legacy_module()
-    assert module is nested_module
-    assert calls[:2] == ["openai_registration", "openai_registration.openai_registration"]
+def test_get_registration_module_uses_internal_module() -> None:
+    module = registrar_module._get_registration_module()
+    assert hasattr(module, "ProtocolRegistrar")
+    assert hasattr(module, "generate_random_password")
+    assert module.__name__.startswith("cliproxyapi.registration.")
 
 
 def _registration_cfg() -> RegistrationConfig:
@@ -150,7 +94,7 @@ def test_register_one_returns_token_payload(monkeypatch) -> None:
         save_token_json=lambda *_args, **_kwargs: "__unused__",
     )
 
-    monkeypatch.setattr("cliproxyapi.registration.registrar.load_legacy_module", lambda: fake_module)
+    monkeypatch.setattr("cliproxyapi.registration.registrar._get_registration_module", lambda: fake_module)
 
     payload, reason = register_one(_registration_cfg())
     assert reason == "Success"
@@ -192,7 +136,7 @@ def test_register_one_returns_none_when_register_failed(monkeypatch) -> None:
         get_runtime_proxy_url=lambda: None,
     )
 
-    monkeypatch.setattr("cliproxyapi.registration.registrar.load_legacy_module", lambda: fake_module)
+    monkeypatch.setattr("cliproxyapi.registration.registrar._get_registration_module", lambda: fake_module)
 
     payload, reason = register_one(_registration_cfg())
     assert payload is None
@@ -251,7 +195,7 @@ def test_register_one_builds_codex_payload_in_memory(monkeypatch) -> None:
         save_token_json=_legacy_save_token_json,
     )
 
-    monkeypatch.setattr("cliproxyapi.registration.registrar.load_legacy_module", lambda: fake_module)
+    monkeypatch.setattr("cliproxyapi.registration.registrar._get_registration_module", lambda: fake_module)
 
     payload, reason = register_one(_registration_cfg())
     assert reason == "Success"

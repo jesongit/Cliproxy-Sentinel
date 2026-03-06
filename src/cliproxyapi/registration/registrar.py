@@ -1,85 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-import importlib
-import sys
 import time
-from pathlib import Path
 from typing import Any
 
+from cliproxyapi.registration import internal_registration
 from cliproxyapi.settings import RegistrationConfig
 
 
-def _candidate_legacy_dirs() -> list[Path]:
-    current_file = Path(__file__).resolve()
-    candidates: list[Path] = []
-
-    if len(current_file.parents) > 4:
-        candidates.append(current_file.parents[4] / "openai_registration")
-    if len(current_file.parents) > 3:
-        candidates.append(current_file.parents[3] / "openai_registration")
-    candidates.append(Path.cwd() / "openai_registration")
-
-    dedup: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        dedup.append(candidate)
-    return dedup
+def _get_registration_module() -> Any:
+    return internal_registration
 
 
-def _is_missing_legacy_module(exc: ModuleNotFoundError) -> bool:
-    missing_name = getattr(exc, "name", None)
-    if missing_name:
-        return missing_name == "openai_registration" or missing_name.startswith("openai_registration.")
-    return "openai_registration" in str(exc)
-
-
-def _is_legacy_module_usable(module: Any) -> bool:
-    return all(
-        hasattr(module, attr_name)
-        for attr_name in ("generate_random_password", "get_runtime_proxy_url", "ProtocolRegistrar")
-    )
-
-
-def _import_legacy_module() -> Any:
-    module = importlib.import_module("openai_registration")
-    if _is_legacy_module_usable(module):
-        return module
-    return importlib.import_module("openai_registration.openai_registration")
-
-
-def load_legacy_module() -> Any:
-    try:
-        return _import_legacy_module()
-    except ModuleNotFoundError as exc:
-        if not _is_missing_legacy_module(exc):
-            raise
-
-    checked_dirs: list[Path] = []
-    for legacy_dir in _candidate_legacy_dirs():
-        checked_dirs.append(legacy_dir)
-        if not legacy_dir.exists():
-            continue
-
-        legacy_path = str(legacy_dir)
-        if legacy_path not in sys.path:
-            sys.path.insert(0, legacy_path)
-
-        try:
-            return _import_legacy_module()
-        except ModuleNotFoundError as exc:
-            if not _is_missing_legacy_module(exc):
-                raise
-
-    checked_text = ", ".join(str(path) for path in checked_dirs)
-    raise FileNotFoundError(f"未找到可用的旧项目目录，请检查 openai_registration 路径。已检查: {checked_text}")
-
-
-def _apply_legacy_config(module: Any, cfg: RegistrationConfig) -> None:
+def _apply_registration_config(module: Any, cfg: RegistrationConfig) -> None:
     module.EMAIL_PREFIX = cfg.email.prefix
     module.EMAIL_DOMAIN = cfg.email.domain
     module.CF_EMAIL_DOMAIN = cfg.email.domain
@@ -156,8 +89,8 @@ def _build_memory_token_payload(
 
 
 def register_one(cfg: RegistrationConfig) -> tuple[dict[str, Any] | None, str]:
-    module = load_legacy_module()
-    _apply_legacy_config(module, cfg)
+    module = _get_registration_module()
+    _apply_registration_config(module, cfg)
 
     email = _generate_email(cfg)
     password = module.generate_random_password()

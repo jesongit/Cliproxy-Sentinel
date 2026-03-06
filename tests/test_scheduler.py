@@ -170,3 +170,79 @@ def test_run_once_does_not_count_upload_when_codex_not_increased() -> None:
     assert summary["uploaded"] == 0
     assert summary["missing_count"] == 1
     client.upload_auth_payload.assert_called_once()
+
+
+def test_run_once_force_add_one_uploads_even_when_target_already_met() -> None:
+    client = Mock()
+    client.list_auth_files.side_effect = [
+        [{"id": "1", "type": "codex", "status": "active", "expired": False}],
+        [{"id": "1", "type": "codex", "status": "active", "expired": False}],
+        [
+            {"id": "1", "type": "codex", "status": "active", "expired": False},
+            {"id": "2", "type": "codex", "status": "active", "expired": False},
+        ],
+    ]
+
+    settings = _settings()
+    settings = Settings(
+        app=settings.app,
+        monitor=MonitorConfig(
+            target_count=1,
+            interval_seconds=1800,
+            max_register_attempts=2,
+            weekly_remaining_threshold_percent=30,
+        ),
+        cliproxy=settings.cliproxy,
+        registration=settings.registration,
+        upload=settings.upload,
+        debug=settings.debug,
+    )
+
+    def fake_register(_cfg):
+        return (
+            {
+                "email": "a@b.com",
+                "access_token": "acc",
+                "refresh_token": "ref",
+                "id_token": "id",
+                "type": "codex",
+            },
+            "Success",
+        )
+
+    summary = run_once(client, settings, register_func=fake_register, force_add_one=True)
+    assert summary["attempts"] == 1
+    assert summary["uploaded"] == 1
+    assert summary["missing_count"] == 0
+    client.upload_auth_payload.assert_called_once()
+
+
+def test_run_once_force_add_one_respects_max_attempts() -> None:
+    client = Mock()
+    client.list_auth_files.side_effect = [
+        [{"id": "1", "type": "codex", "status": "active", "expired": False}],
+        [{"id": "1", "type": "codex", "status": "active", "expired": False}],
+    ]
+
+    settings = _settings()
+    settings = Settings(
+        app=settings.app,
+        monitor=MonitorConfig(
+            target_count=1,
+            interval_seconds=1800,
+            max_register_attempts=2,
+            weekly_remaining_threshold_percent=30,
+        ),
+        cliproxy=settings.cliproxy,
+        registration=settings.registration,
+        upload=settings.upload,
+        debug=settings.debug,
+    )
+
+    def fake_register(_cfg):
+        return None, "失败"
+
+    summary = run_once(client, settings, register_func=fake_register, force_add_one=True)
+    assert summary["attempts"] == 2
+    assert summary["uploaded"] == 0
+    assert summary["missing_count"] == 1

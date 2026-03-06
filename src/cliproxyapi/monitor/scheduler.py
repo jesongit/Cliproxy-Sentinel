@@ -33,6 +33,7 @@ def run_once(
     client: Any,
     settings: Settings,
     register_func: Callable[[Any], tuple[dict[str, Any] | None, str]] = register_one,
+    force_add_one: bool = False,
 ) -> dict[str, int]:
     auth_files = client.list_auth_files()
     invalid_entries, valid_count, _ = plan_replenishment(
@@ -56,7 +57,11 @@ def run_once(
         target_count=settings.monitor.target_count,
         weekly_threshold=settings.monitor.weekly_remaining_threshold_percent,
     )
-    logger.info("清理后有效=%s，需补充=%s", valid_count, missing_count)
+    if force_add_one:
+        missing_count = 1
+        logger.info("清理后有效=%s，单轮模式强制新增=1", valid_count)
+    else:
+        logger.info("清理后有效=%s，需补充=%s", valid_count, missing_count)
 
     attempts = 0
     uploaded = 0
@@ -80,11 +85,15 @@ def run_once(
             if updated_valid_count > valid_count:
                 uploaded += updated_valid_count - valid_count
                 valid_count = updated_valid_count
-                missing_count = updated_missing_count
+                if force_add_one:
+                    missing_count = max(0, 1 - uploaded)
+                else:
+                    missing_count = updated_missing_count
                 logger.info("上传生效：%s，当前有效=%s，剩余缺口=%s", filename, valid_count, missing_count)
             else:
                 valid_count = updated_valid_count
-                missing_count = updated_missing_count
+                if not force_add_one:
+                    missing_count = updated_missing_count
                 logger.warning(
                     "上传完成但未增加有效 codex：%s，当前有效=%s，剩余缺口=%s",
                     filename,
@@ -95,8 +104,12 @@ def run_once(
             logger.error("上传或回查失败：%s", exc)
             _maybe_save_failed_payload(settings, payload, str(exc))
 
-    if missing_count > 0:
+    if missing_count > 0 and force_add_one:
+        logger.warning("本轮结束：强制新增未达成，仍需新增=%s，成功上传=%s，尝试=%s", missing_count, uploaded, attempts)
+    elif missing_count > 0:
         logger.warning("本轮结束：仍缺少=%s，成功上传=%s，尝试=%s", missing_count, uploaded, attempts)
+    elif force_add_one:
+        logger.info("本轮结束：已完成强制新增 1 个账号")
     else:
         logger.info("本轮结束：已补齐目标数量=%s", settings.monitor.target_count)
 

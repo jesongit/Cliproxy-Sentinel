@@ -16,7 +16,7 @@
 
 1. 面向账号池的闭环维护：巡检、清理、补齐一体化。
 2. 配置集中在根目录 `config.yaml`，部署与修改更直观。
-3. 与旧注册逻辑解耦，通过适配器复用 `openai_registration`。
+3. 注册逻辑已内置在项目源码中，无需外部注册仓库。
 4. 默认内存上传 token，降低敏感文件落盘风险。
 5. 支持本地运行和 Docker Compose 部署两种模式。
 
@@ -56,7 +56,6 @@ cliproxyapi/
 1. Python 3.10+
 2. 可访问 CLIProxyAPI 管理接口
 3. 可用的 IMAP 邮箱（用于验证码）
-4. 可用的 `openai_registration` 能力（目录挂载或 Python 包）
 
 ## 本地运行
 
@@ -87,6 +86,8 @@ cp config.example.yaml config.yaml
 ```bash
 python -m cliproxyapi.app --config config.yaml --once
 ```
+
+说明：`--once` 会强制新增 1 个账号，不按目标数量做补齐计算。
 
 常驻执行（生产）：
 
@@ -121,8 +122,7 @@ docker compose down
 ```
 
 说明：
-1. 当前 `docker-compose.yml` 默认挂载 `../openai_registration:/app/openai_registration:ro`。
-2. 如果你通过 `pip` 安装了 `openai_registration`，可以移除该挂载。
+1. 当前镜像已包含内置注册模块，无需额外挂载注册仓库。
 
 ## 测试
 
@@ -132,15 +132,13 @@ python -m pytest -q
 
 ## 常见问题（FAQ）
 
-### 1) 容器日志提示找不到 `openai_registration`
+### 1) 注册流程报错如何定位？
 
-请检查 `docker-compose.yml` 是否存在并可访问以下挂载：
+先查看容器日志确认失败阶段（OAuth、邮箱验证码、上传 token）：
 
-```text
-../openai_registration:/app/openai_registration:ro
+```bash
+docker compose logs -f cliproxyapi
 ```
-
-如果你通过 `pip` 安装了该模块，可以移除这条挂载。
 
 ### 2) 为什么默认不把 token 写入本地文件？
 

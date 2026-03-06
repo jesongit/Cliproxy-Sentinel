@@ -9,4 +9,4 @@
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./debug_failed_payloads:/app/debug_failed_payloads
-      - ../openai_registration:/app/openai_registration:ro
+

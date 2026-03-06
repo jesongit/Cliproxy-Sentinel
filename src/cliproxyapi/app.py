@@ -47,7 +47,11 @@ def main() -> None:
         upload_field_name=settings.upload.field_name,
     )
 
-    if args.once or settings.app.once:
+    if args.once:
+        run_once(client, settings, force_add_one=True)
+        return
+
+    if settings.app.once:
         run_once(client, settings)
         return
 
